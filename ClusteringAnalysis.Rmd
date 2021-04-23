@@ -1,0 +1,372 @@
+---
+title: "Clusting Analysis Resilience Score on LGBTQ"
+author: "Faizan Khalid Mohsin"
+date: "August 3, 2019"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.height=4)
+
+
+#Load all packages
+library(missForest)
+require(kableExtra)
+require(tableone)
+require(ggplot2)
+require(UsingR)
+require(glmnet)
+require(knitr)
+require(dplyr)
+require(epiR)
+require(class)
+library(rpart)
+library(tree)
+library(pROC)
+library(mice)
+library(ISLR)
+library(fpc)
+library(gplots)
+library(xtable)
+library(readxl)
+library(cluster)
+library(corrplot)
+
+#install.packages("tableone", "kableExtra",  "UsingR", "glmnet", "epiR", "tree", "pROC")
+
+```
+
+
+## Data
+
+```{r Data}
+
+dataraw = read_excel("Final data with Log after committee.xlsx", sheet = "FinalDataNew_AttSexOr_aftReview")
+
+var_clust = c("Close_Score", "Dependent_Score", "AttachmentAnxietyScore")
+
+data_cluster = dataraw[, var_clust]
+
+dim(data_cluster)
+str(data_cluster)
+
+summary(data_cluster)
+
+# Complete case analysis
+
+data_cluster_comp = data_cluster[complete.cases(data_cluster),]
+dim(data_cluster_comp)
+str(data_cluster_comp)
+
+```
+
+## Clusting
+
+
+```{r clustering}
+# let's investigate the number of clusters for kmeans
+
+kdata.scale = data_cluster_comp
+
+sil_width1 <- c()
+
+for(i in 1:4){
+  km_out = kmeans(kdata.scale,i+1,nstart=40)
+  si <- silhouette(km_out$cluster,dist(kdata.scale))
+  ssi <- summary(si)
+  
+  # with pam fit, sil info is provided as part of the output
+  # for other clustering methods we would have to extract it with the
+  # silhouette function
+  sil_width1[i] <- ssi$avg.width
+}
+
+# Plot sihouette width (higher is better)
+plot(2:5, sil_width1,
+     main = "Silhouette Width vs. Number of Clusters for K-Means Clustering",
+     xlab = "Number of clusters",
+     ylab = "Average Silhouette Width") 
+lines(2:5, sil_width1)
+```
+
+
+```{r}
+
+# let's investigate the number of clusters for Hierarchical Clustering
+sil_width2 <- c()
+
+hc.complete <- hclust(dist(kdata.scale), method="complete")
+
+for(i in 1:4){
+  cut.tree.complete <- cutree(hc.complete,k=i+1)
+  si <- silhouette(cut.tree.complete,dist(kdata.scale))
+  ssi <- summary(si)
+  
+  # with pam fit, sil info is provided as part of the output
+  # for other clustering methods we would have to extract it with the
+  # silhouette function
+  sil_width2[i] <- ssi$avg.width
+}
+
+# Plot sihouette width (higher is better)
+plot(2:5, sil_width2,
+     main = "Silhouette Width vs. Number of Clusters for Hierarchical Clustering",
+     xlab = "Number of clusters",
+     ylab = "Average Silhouette Width") 
+lines(2:5, sil_width2)
+
+
+```
+
+
+```{r}
+# let's investigate the number of clusters for PAM
+
+y = kdata.scale # We use our scaled data. 
+
+sil_width3 <- c()
+for(i in 1:4){
+  pam_fit <- pam(y, k=i+1)
+  # with pam fit, sil info is provided as part of the output
+  # for other clustering methods we would have to extract it with the
+  # silhouette function
+  sil_width3[i] <- pam_fit$silinfo$avg.width
+}
+
+# Plot sihouette width (higher is better)
+
+plot(2:5, sil_width3,
+     main = "Silhouette Width vs. Number of Clusters for PAM",
+     xlab = "Number of clusters",
+     ylab = "Silhouette Width")
+lines(2:5, sil_width3)
+
+
+```
+
+
+
+
+
+```{r}
+# 
+# #################### Helper functions
+# 
+# 
+# ##################### Function 1
+# # We create a function that will take in as arguments:
+# # the kmeans clustering output, the variable column positions
+# # and the categorical variable to be used for plotting
+# # the clusters and the factors of the categorical variables
+# # on the scatter plot of the two indicated variables.
+# 
+# plot_kmeans_variables = function( km.out, x, y, labels_type){
+#   
+#   # Plot the points with clusters and labels
+#   plot(data_unscaled[, c(x,y)],col=km.out$cluster, 
+#        pch = sort(as.numeric(unique(labels_type)))[labels_type], 
+#        main = "Plotting Proteins with Clusters and Characteristic Levels")
+# 
+#   
+#   # Plot the legend
+#   unique_clusters = sort(unique(km.out$cluster))
+#   cluster_names = paste("Cluster", as.character(unique_clusters))
+#   label_names = as.character(unique(labels_type))
+#   
+#   legend("topleft",  
+#          legend = cluster_names, 
+#          text.col = unique_clusters, 
+#          bty = "n") 
+#   
+#     legend("bottomright",  
+#          legend = label_names, 
+#          text.col = "black", 
+#          pch = as.numeric(unique(labels_type)),
+#          bty = "n")
+#   
+# }
+# 
+# 
+# ###################### Function 2
+# # Creating a function that will plot the k-clustering 
+# # with the PCA and labels. 
+# # The function will take in arguments:
+# # the kmeans clustering output, and 
+# # the categorical variable (labels_type),
+# # to be used for plotting the clusters as different labels/shapes
+# # such as triagles, circles, etc. 
+# # The categorical variables levels will be the different colours
+# # These will be plotted on the first two pc's.
+# 
+# plot_PCA_kmeans = function( km.out, labels_type) {
+#   
+#   # Extract all the info from the km clustering output
+#   clusters <- km.out$cluster
+#   unique_clusters = sort(unique(clusters))
+#   
+#   # Perform PCA
+#   nba2d <- prcomp(kdata.scale, center=TRUE)
+#   twoColumns <- nba2d$x[,1:2]
+#   
+#   # Plot PCA with the labels_type i.e. behaviour, etc.
+#   clusplot(twoColumns, unique_clusters[clusters], col.p = c("deeppink", "blue")[labels_type], 
+#            col.clus = "black" )
+#   
+#   # Create variables for the legend.
+#   cluster_names = paste("Cluster", as.character(unique_clusters))
+#   label_names = as.character(unique(labels_type))
+#   black = rep("black", length(unique_clusters))
+# 
+#   
+#   # Plot the legend
+#   legend("topright",  
+#          legend = c(cluster_names, label_names), 
+#          col = c(black, "deeppink", "blue"), 
+#          pch = c( unique_clusters, 15, 15), 
+#          bty = "n", 
+#          text.col = "black") 
+#   
+# }
+# 
+# 
+# # We create the same functions as above, however, 
+# # we slightly generalize them a bit more to be more
+# # flexible.
+# 
+# 
+# ##################### Function 1
+# 
+# plot_kmeans_variables1 = function( cluster_output, x, y, labels_type){
+#   
+#   # Plot the points with clusters and labels
+#   plot(data_unscaled[, c(x,y)],col=cluster_output,
+#        pch = sort(as.numeric(unique(labels_type)))[labels_type], 
+#        main = "Plotting Proteins with Clusters and Characteristic Levels")
+#   
+#   # Plot the legend
+#   unique_clusters = sort(unique(cluster_output))
+#   cluster_names = paste("Cluster",
+#                         as.character(unique_clusters))
+#   label_names = as.character(unique(labels_type)) 
+#   
+#   
+#   legend("bottomright",  
+#          legend = label_names, 
+#          text.col = "black", 
+#          pch = as.numeric(unique(labels_type)),
+#          bty = "n")  
+#   
+#     legend("topleft",  
+#          legend = cluster_names, 
+#          text.col = unique_clusters, 
+#          bty = "n")
+#   
+# }
+# 
+# 
+# ###################### Function 2
+# 
+# plot_PCA_kmeans1 = function( cluster_output, labels_type) {
+#   
+#   # Extract all the info from the km clustering output
+#   clusters <- cluster_output
+#   unique_clusters = sort(unique(clusters))
+#   
+#   # Perform PCA
+#   nba2d <- prcomp(kdata.scale, center=TRUE)
+#   twoColumns <- nba2d$x[,1:2]
+#   
+#   # Plot PCA with the labels_type i.e. behaviour, etc.
+#   clusplot(twoColumns, unique_clusters[clusters], col.p = c("deeppink", "blue")[labels_type], 
+#            col.clus = "black"  )
+#   
+#   # Create variables for the legend.
+#   cluster_names = paste("Cluster", as.character(unique_clusters))
+#   label_names = as.character(unique(labels_type))
+#   black = rep("black", length(unique_clusters))
+#   
+#   # Plot the legend
+#   legend("topright",  
+#          legend = c(cluster_names, label_names), 
+#          col = c(black, "deeppink", "blue"), 
+#          pch = c( unique_clusters, 15, 15), 
+#          bty = "n", 
+#          text.col = "black") 
+# }
+
+
+```
+
+```{r}
+
+# plot_kmeans_variables1 = function(data, cluster_output, x, y){
+#   
+#   # Plot the points with clusters and labels
+#   plot(data[, c(x,y)],col=cluster_output,
+#        pch = sort(as.numeric(unique(cluster_output)))[cluster_output], 
+#        main = "Clusters and Characteristic Levels")
+#   
+#   # Plot the legend
+#   unique_clusters = sort(unique(cluster_output))
+#   cluster_names = paste("Cluster",
+#                         as.character(unique_clusters))
+#   label_names = as.character(unique(cluster_output)) 
+#   
+#   legend("bottomright",  
+#          legend = label_names, 
+#          text.col = "black", 
+#          pch = as.numeric(unique(labels_type)),
+#          bty = "n")  
+#   
+#     legend("topleft",  
+#          legend = cluster_names, 
+#          text.col = unique_clusters, 
+#          bty = "n")
+# }
+
+```
+
+
+```{r}
+
+km2.mouse.out = kmeans(kdata.scale,2,nstart=40)
+plotcluster(kdata.scale,km2.mouse.out$cluster)
+plotcluster(kdata.scale[,c(1,3)],km2.mouse.out$cluster)
+plotcluster(kdata.scale[,c(1, 2)],km2.mouse.out$cluster)
+plotcluster(kdata.scale[,c(2,3)],km2.mouse.out$cluster)
+
+```
+
+
+
+This has interesting pattern. For the characteristic: behavior levels, the data seems to be well divided into upper and lower halves at zero, with all the S/C being above zero and majority of C/S being below zero.
+
+
+```{r}
+km3.mouse.out = kmeans(kdata.scale,3,nstart=40)
+
+str(km3.mouse.out)
+km3.mouse.out
+
+plotcluster(kdata.scale,km3.mouse.out$cluster)
+plotcluster(kdata.scale[,c(1,3)],km3.mouse.out$cluster)
+plotcluster(kdata.scale[,c(1, 2)],km3.mouse.out$cluster)
+plotcluster(kdata.scale[,c(2,3)],km3.mouse.out$cluster)
+#plot( kdata.scale[,1] , kdata.scale[,2] ,   col = km3.mouse.out$cluster)
+```
+
+
+```{r}
+
+cor(kdata.scale, method="spearman")
+plot(kdata.scale$Close_Score, kdata.scale$Dependent_Score)
+plot(kdata.scale$Close_Score, kdata.scale$AttachmentAnxietyScore)
+plot(kdata.scale$AttachmentAnxietyScore, kdata.scale$Dependent_Score)
+```
+
+
+
